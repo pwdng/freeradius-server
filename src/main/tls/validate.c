@@ -377,7 +377,11 @@ int tls_validate_client_cert_chain(SSL *ssl)
 	if (verify != 1) {
 		err = X509_STORE_CTX_get_error(store_ctx);
 
-		if (err != X509_V_OK) {
+#if OPENSSL_VERSION_NUMBER >= 0x10002000L
+                if (err != X509_V_OK && !(ERR_GET_LIB(ssl_err) == ERR_LIB_X509 && ERR_GET_REASON(ssl_err) == X509_R_NO_CERT_SET_FOR_US_TO_VERIFY)) {
+#else
+                if (err != X509_V_OK) {
+#endif
 			REDEBUG("Failed re-validating resumed session: %s", X509_verify_cert_error_string(err));
 			ret = 0;
 		}
