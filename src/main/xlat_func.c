@@ -1024,34 +1024,63 @@ static int fr_value_box_to_bin(TALLOC_CTX *ctx, REQUEST *request, uint8_t **out,
  *
  * Example: "%{md5:foo}" == "acbd18db4cc2f85cedef654fccc4a4d8"
  */
-static ssize_t md5_xlat(UNUSED TALLOC_CTX *ctx, char **out, size_t outlen,
-			UNUSED void const *mod_inst, UNUSED void const *xlat_inst,
-			REQUEST *request, char const *fmt)
+static xlat_action_t xlat_md5(TALLOC_CTX *ctx, fr_cursor_t *out,
+			      REQUEST *request, UNUSED void const *xlat_inst, UNUSED void *xlat_thread_inst,
+			      fr_value_box_t **in)
 {
 	uint8_t		digest[16];
-	size_t		i, len, inlen;
-	uint8_t		*p;
+	size_t		i, len;
 	FR_MD5_CTX	md5_ctx;
-	TALLOC_CTX	*tmp_ctx = NULL;
+	char		*buff;
+	fr_value_box_t	*vb_in;
+	fr_value_box_t	*vb_out;
 
-	VALUE_FROM_FMT(tmp_ctx, p, inlen, request, fmt);
+	/*
+	 * If there's no input, use empty value box so that md5 of null can be processed
+	 */
+	if (*in) {
+		if (fr_value_box_list_concat(ctx, *in, in, FR_TYPE_OCTETS, true) < 0) {
+			RPEDEBUG("Failed concatenating input");
+			return XLAT_ACTION_FAIL;
+		}
+		vb_in = *in;
+	} else {
+		MEM(vb_in = fr_value_box_alloc_null(ctx));
+	}
+
+	MEM(vb_out = fr_value_box_alloc_null(ctx));
 
 	fr_md5_init(&md5_ctx);
-	fr_md5_update(&md5_ctx, p, inlen);
+	fr_md5_update(&md5_ctx, vb_in->vb_octets, vb_in->vb_length);
 	fr_md5_final(digest, &md5_ctx);
+
+	/*
+	 * MD5 will alway produce a 128 bits (16 bytes) digest expressed as 32 hex digits
+	 */
+	len = 16;
+
+	MEM(buff = talloc_zero_array(ctx, char, 2 * len + 1));
 
 	/*
 	 *	Each digest octet takes two hex digits, plus one for
 	 *	the terminating NUL.
 	 */
-	len = (outlen / 2) - 1;
-	if (len > 16) len = 16;
+	for (i = 0; i < len; i++) snprintf(buff + (i * 2), 3, "%02x", digest[i]);
 
-	for (i = 0; i < len; i++) snprintf((*out) + (i * 2), 3, "%02x", digest[i]);
+	if (fr_value_box_bstrsnteal(vb_out, vb_out, NULL, &buff, 2 * len + 1, false) < 0) {
+		RPEDEBUG("Failed assigning encoded data buffer to box");
+		talloc_free(vb_out);
+		return XLAT_ACTION_FAIL;
+	}
 
-	talloc_free(tmp_ctx);
+	fr_cursor_append(out, vb_out);
 
-	return strlen(*out);
+	/*
+	 * Free empty vb
+	 */
+	if (! *in) talloc_free(vb_in);
+
+	return XLAT_ACTION_DONE;
 }
 
 /** Calculate the SHA1 hash of a string or attribute.
@@ -2450,7 +2479,6 @@ int xlat_init(void)
 	xlat_register(NULL, "urlunquote", urlunquote_xlat, NULL, NULL, 0, XLAT_DEFAULT_BUF_LEN, true);
 	xlat_register(NULL, "tolower", tolower_xlat, NULL, NULL, 0, XLAT_DEFAULT_BUF_LEN, true);
 	xlat_register(NULL, "toupper", toupper_xlat, NULL, NULL, 0, XLAT_DEFAULT_BUF_LEN, true);
-	xlat_register(NULL, "md5", md5_xlat, NULL, NULL, 0, XLAT_DEFAULT_BUF_LEN, true);
 	xlat_register(NULL, "sha1", sha1_xlat, NULL, NULL, 0, XLAT_DEFAULT_BUF_LEN, true);
 #ifdef HAVE_OPENSSL_EVP_H
 	xlat_register(NULL, "sha224", sha224_xlat, NULL, NULL, 0, XLAT_DEFAULT_BUF_LEN, true);
@@ -2486,6 +2514,7 @@ int xlat_init(void)
 	xlat_async_register(NULL, "base64", xlat_base64, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
 	xlat_async_register(NULL, "concat", xlat_concat, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
 	xlat_async_register(NULL, "bin", xlat_bin, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+	xlat_async_register(NULL, "md5", xlat_md5, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
 
 	return 0;
 }
