@@ -2163,12 +2163,26 @@ static xlat_action_t xlat_concat(TALLOC_CTX *ctx, fr_cursor_t *out,
 				 fr_value_box_t **in)
 {
 	fr_value_box_t *result;
+	fr_value_box_t *separator;
 	char *buff;
+	char const *sep;
 
 	/*
 	 *	If there's no input, there's no output
 	 */
 	if (!in) return XLAT_ACTION_DONE;
+
+	/*
+	 * Separator is first value box
+	 */
+	separator = *in;
+
+	if (!separator) {
+		REDEBUG("Missing separator for concat xlat");
+		return XLAT_ACTION_FAIL;
+	}
+
+	sep = separator->vb_strvalue;
 
 	/*
 	 *	Otherwise, join the boxes together commas
@@ -2181,10 +2195,10 @@ static xlat_action_t xlat_concat(TALLOC_CTX *ctx, fr_cursor_t *out,
 		return XLAT_ACTION_FAIL;
 	}
 
-	buff = fr_value_box_list_asprint(result, *in, ",", '\0');
+	buff = fr_value_box_list_asprint(result, (*in)->next, sep, '\0');
 	if (!buff) goto error;
 
-	fr_value_box_bstrsteal(result, result, NULL, buff, fr_value_box_list_tainted(*in));
+	fr_value_box_bstrsteal(result, result, NULL, buff, fr_value_box_list_tainted((*in)->next));
 
 	fr_cursor_insert(out, result);
 
